@@ -44,7 +44,7 @@ void init_stack(SITE_STACK* stack_ptr) {
 	}
 }
 
-inline bool is_empty(SITE_STACK* stack_ptr) {
+int is_empty(SITE_STACK* stack_ptr) {
 	return stack_ptr->size == 0;
 }
 
