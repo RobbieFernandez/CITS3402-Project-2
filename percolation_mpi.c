@@ -72,26 +72,26 @@ void populate_matrix(SITE* matrix, int size, double probability, int site)
 			currentSite->col = col;
 			currentSite->populated = rng(probability);
 			if(currentSite->populated) {
-				SITE* current = getSite(matrix, row, col, size);
+				// SITE* current = getSite(matrix, row, col, size);
 				if ((col > 0) && ((site) || rng(probability))) {
 					SITE* west = getSite(matrix, row, modulus(col-1, size), size); 
-					current->w = west->populated;
-					west->e = current->w;
+					currentSite->w = west->populated;
+					west->e = currentSite->w;
 				}
 				if ((row > 0) && ((site) || rng(probability))) {
 					SITE* north = getSite(matrix, modulus(row-1, size), col, size); 
-					current->n = north->populated;
-					north->s = current->n;
+					currentSite->n = north->populated;
+					north->s = currentSite->n;
 				}
 				if ((row == size-1) && ((site) || rng(probability))) {
 					SITE* south = getSite(matrix, modulus(row+1, size), col, size);
-					current->s = south->populated;
-					south->n = current->s;
+					currentSite->s = south->populated;
+					south->n = currentSite->s;
 				}
 				if ((col == size-1) && ((site) || rng(probability))){
 					SITE* east = getSite(matrix, row, modulus(col+1, size), size);
-					current->e = east->populated;
-					east->w = current->e;
+					currentSite->e = east->populated;
+					east->w = currentSite->e;
 				}
 			}
 		}
@@ -353,7 +353,6 @@ int main(int argc, char* argv[]) {
 		printf("Invalid arguments\n");
 	}
 
-	MPI_Finalize();
 
 	// end timer
 	gettimeofday(&end, NULL);
@@ -362,4 +361,6 @@ int main(int argc, char* argv[]) {
 
 	if (numId == MASTER)
 		printf("time=%12.10f\n",delta);	
+
+	MPI_Finalize();
 }
