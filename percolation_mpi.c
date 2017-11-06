@@ -5,6 +5,7 @@
 #include <mpi.h>
 #include "site.h"
 #include "stack.h"
+#include <omp.h>
 
 #define MASTER 0 // The Master Node has the lowest index 
 #define MAX_SIZE_TAG 0 // The Tag for Cluster Size 
@@ -18,6 +19,7 @@
 void free_matrix(void** matrix, int size) 
 {
 	int i; // Declare a matrix index
+	#pragma omp parallel for
 	for (i=0; i<size; i++) // Iterate though every cell
 	{
 		free(matrix[i]); // Free the memory allocated to each cell
@@ -65,37 +67,120 @@ SITE* getSite(SITE* matrix, int row, int col,int size)
 void populate_matrix(SITE* matrix, int size, double probability, int site) 
 {
 	srand(time(NULL)); 
-	for (int row=0; row<size; row++) {
-		for (int col=0; col<size; col++) {
-			SITE *currentSite = getSite(matrix, row, col, size);
-			currentSite->row = row;
-			currentSite->col = col;
-			currentSite->populated = rng(probability);
-			if(currentSite->populated) {
-				// SITE* current = getSite(matrix, row, col, size);
-				if ((col > 0) && ((site) || rng(probability))) {
-					SITE* west = getSite(matrix, row, modulus(col-1, size), size); 
-					currentSite->w = west->populated;
-					west->e = currentSite->w;
-				}
-				if ((row > 0) && ((site) || rng(probability))) {
-					SITE* north = getSite(matrix, modulus(row-1, size), col, size); 
-					currentSite->n = north->populated;
-					north->s = currentSite->n;
-				}
-				if ((row == size-1) && ((site) || rng(probability))) {
-					SITE* south = getSite(matrix, modulus(row+1, size), col, size);
-					currentSite->s = south->populated;
-					south->n = currentSite->s;
-				}
-				if ((col == size-1) && ((site) || rng(probability))){
-					SITE* east = getSite(matrix, row, modulus(col+1, size), size);
-					currentSite->e = east->populated;
-					east->w = currentSite->e;
+	int numBlocks; 
+	int blockSize;
+
+	//Handle each block parallel to each other but sequentially within the block itself
+	int block;
+	numBlocks = 1;
+
+	// Work out the optimal number of threads to use based on the lattice size
+	int divisor;
+	for(divisor = 12; divisor > 1; divisor--)
+	{
+		if(size % divisor == 0)
+		{
+			numBlocks = divisor;
+			break;
+		}
+	}
+
+	blockSize = size / numBlocks;
+	if(blockSize < 1) blockSize = 1;
+
+
+	#pragma omp parallel for
+	for(block = 0; block < numBlocks*numBlocks; block++)
+	{
+		int row;
+		for (row = (block/numBlocks)*blockSize; row < (block/numBlocks + 1)*(blockSize); row++) 
+		{
+			int col;
+			for (col = (block%numBlocks)*blockSize; col < (block%numBlocks + 1)*(blockSize); col++) 
+			{
+				SITE *currentSite = getSite(matrix, row, col, size);
+				currentSite->row = row;
+				currentSite->col = col;
+				currentSite->populated = rng(probability);
+				if(currentSite->populated) 
+				{
+					if ((col%blockSize > 0) && ((site) || rng(probability))) 
+					{
+						SITE* west = getSite(matrix, row, modulus(col-1, size), size); 
+						currentSite->w = west->populated;
+						west->e = currentSite->w;
+					}
+					if ((row%blockSize > 0) && ((site) || rng(probability))) 
+					{
+						SITE* north = getSite(matrix, modulus(row-1, size), col, size); 
+						currentSite->n = north->populated;
+						north->s = currentSite->n;
+					}
 				}
 			}
 		}
 	}
+	
+	//printf("Completed Parallel Block Population.\n");
+
+	// Handle the Edge Cases where Boundary Percolation is relevant
+
+	int row;
+	int col;
+	for(row = 0; row < numBlocks*blockSize; row += blockSize)
+	{
+		for(col = 0; col < numBlocks*blockSize; col++)
+		{
+			SITE *currentSite = getSite(matrix, row, col, size);
+			currentSite->row = row;
+			currentSite->col = col;
+			if(currentSite->populated) 
+			{
+				SITE* current = getSite(matrix, row, col, size);
+				if ((row%blockSize == blockSize-1) && ((site) || rng(probability)))
+				{
+					SITE* south = getSite(matrix, modulus(row+1, size), col, size);
+					current->s = south->populated;
+					south->n = current->s;
+				}
+				if ((col%blockSize == blockSize-1) && ((site) || rng(probability)))
+				{
+					SITE* east = getSite(matrix, row, modulus(col+1, size), size);
+					current->e = east->populated;
+					east->w = current->e;
+				}
+			}
+		}
+	}
+	//printf("Completed Row, Column Edge Population.\n");
+
+	for(row = 0; row < numBlocks*blockSize; row++)
+	{
+		for(col = 0; col < numBlocks*blockSize; col+= blockSize)
+		{
+			SITE *currentSite = getSite(matrix, row, col, size);
+			currentSite->row = row;
+			currentSite->col = col;
+			if(currentSite->populated) 
+			{
+				SITE* current = getSite(matrix, row, col, size);
+				if ((row%blockSize == blockSize-1) && ((site) || rng(probability)))
+				{
+					SITE* south = getSite(matrix, modulus(row+1, size), col, size);
+					current->s = south->populated;
+					south->n = current->s;
+				}
+				if ((col%blockSize == blockSize-1) && ((site) || rng(probability)))
+				{
+					SITE* east = getSite(matrix, row, modulus(col+1, size), size);
+					current->e = east->populated;
+					east->w = current->e;
+				}
+			}
+		}
+	}
+	//printf("Completed Column, Row Edge Population\n");
+
 }
 
 // Flood the matrix from a starting row and column, mark all seen sites in the visited matrix.
@@ -191,14 +276,13 @@ int get_max_cluster(SITE* lattice, int size, int lowerBound, int upperBound, ROU
 	// This is so we can avoid exploring starting points that are a part of a previously visited cluster.
 	// Clusters can never overlap so this is fine.
 	int** visited = (int**) calloc(size, sizeof(int*));
-	for (int i=0; i<size; i++) {
+	for (int i = 0; i<size; i++) {
 		visited[i] = (int *) calloc(size, sizeof(int));
 	}
 
 	int square_size = size * size;
-	int count;
 
-	for(count=lowerBound; count<upperBound; count++) {
+	for(int count=lowerBound; count<upperBound; count++) {
 		int row, col;
 		row = count / size;
 		col = count % size;
@@ -295,6 +379,7 @@ int main(int argc, char* argv[]) {
 		if (numId == MASTER) {
 			// The master process will seed the lattice and broadcast it to all other processes.
 			populate_matrix(matrix,size, p, type == 's');
+			//print_lattice(matrix, size);
 		}
 
 		// All other processes receive the lattice as a 1d array.
@@ -353,7 +438,6 @@ int main(int argc, char* argv[]) {
 		printf("Invalid arguments\n");
 	}
 
-
 	// end timer
 	gettimeofday(&end, NULL);
 	double delta = ((end.tv_sec  - start.tv_sec) * 1000000u +
@@ -361,6 +445,6 @@ int main(int argc, char* argv[]) {
 
 	if (numId == MASTER)
 		printf("time=%12.10f\n",delta);	
-
 	MPI_Finalize();
+
 }
